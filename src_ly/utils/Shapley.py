@@ -1,0 +1,152 @@
+from tqdm import trange, tqdm
+from src.utils.update import test_inference
+from src.util import average_weights
+import numpy as np
+
+class Shapley():
+    def __init__(self,local_weights,args, global_model, valid_dataset):
+        self.local_weights = local_weights
+        self.args = args
+        self.global_model = global_model
+        self.valid_dataset = valid_dataset
+
+    def get_weights(self,j, idx, local_ws):
+        test_weight = []
+        for i in range(j):
+            current_weight = local_ws[idx[i]]
+            test_weight.append(current_weight)
+
+        return test_weight
+
+    """
+        Calculate the exact Shapley value
+    """
+    def eval_exactshap(self):
+        n = len(self.local_weights)
+
+        def enum(l):
+            for i in range(len(self.local_weights)-1,-1,-1):
+                if l[i] == 0:
+                    l[i] = 1
+                    break
+                else:
+                    l[i] = 0
+            return l
+
+        shapley = np.zeros(n)
+        coef = np.zeros(n)
+        fact = np.math.factorial
+        coalition = np.arange(n)
+        for s in range(n):
+            coef[s] = fact(s)*fact(n-s-1)/fact(n)
+        l = np.zeros(n)
+
+        enum(l)
+        while np.sum(l) != 0:
+            idx = []
+            test_weights = []
+            for i in range(n):
+                if l[i] == 1:
+                    idx.append(i)
+                    test_weights.append(self.local_weights[i])
+            test_weight = average_weights(test_weights)
+            self.global_model.load_state_dict(test_weight)
+            self.global_model.eval()
+            current_acc, current_loss = test_inference(self.args, self.global_model, self.valid_dataset)
+            for i in idx:
+                shapley[i] += coef[len(idx)-1]*current_acc
+            for i in set(coalition)-set(idx):
+                shapley[i] -= coef[len(idx)]*current_acc
+            enum(l)
+
+        return shapley
+
+    """
+        Approximate Shapley value by monte carlo method
+    """
+    def eval_mcshap(self,subnumber):
+        shapley = np.zeros(len(self.local_weights))
+        for step in trange(subnumber):
+            index = np.random.permutation(len(self.local_weights))
+            original_acc = 0
+            for j in range(1, len(index)):
+                test_weights = self.get_weights(j, index, self.local_weights)
+                test_weight = average_weights(test_weights)
+                self.global_model.load_state_dict(test_weight)
+                self.global_model.eval()
+                current_acc, current_loss = test_inference(self.args, self.global_model, self.valid_dataset)
+                shapley[index[j - 1]] += current_acc - original_acc
+                original_acc = current_acc
+
+        shapley = [shap / subnumber for shap in shapley]
+        return shapley
+
+    """
+        Approximate Shapley value by neyman method
+    """
+    def eval_neymanshap(self,subnumber):
+        SV_estimator = np.zeros([len(self.local_weights),len(self.local_weights)])
+        cnt = np.zeros([len(self.local_weights),len(self.local_weights)])
+        marginal_contributions = [[] for i in range(len(self.local_weights))]
+        sampling_variance = np.zeros(len(self.local_weights))
+        sampling_number = np.zeros(len(self.local_weights))
+
+        for step in trange(int(subnumber/2)):
+            index = np.random.permutation(len(self.local_weights))
+            original_acc = 0
+            for j in range(1, len(index)):
+                test_weights = self.get_weights(j, index, self.local_weights)
+                test_weight = average_weights(test_weights)
+                self.global_model.load_state_dict(test_weight)
+                self.global_model.eval()
+                current_acc, current_loss = test_inference(self.args, self.global_model, self.valid_dataset)
+                SV_estimator[index[j - 1]][j] += current_acc - original_acc
+                cnt[index[j - 1]][j] += 1
+                marginal_contributions[j].append(current_acc - original_acc)
+                original_acc = current_acc
+
+        for i in range(len(marginal_contributions)):
+            if len(marginal_contributions[i]) != 0:
+                mu = np.array(marginal_contributions[i]).sum()
+                for j in range(len(marginal_contributions[i])):
+                    sampling_variance[i] += (marginal_contributions[i][j]-mu)**2/(len(marginal_contributions)-1)
+
+        print(sampling_variance)
+
+        for j in trange(1, len(sampling_variance)):
+            sampling_number[j] = int(sampling_variance[j] / np.array(sampling_variance).sum() * subnumber/2*len(self. local_weights))
+
+            for _ in range(int(sampling_number[j])):
+                index = np.random.permutation(len(self.local_weights))
+                original_acc = 0
+                if j > 1:
+                    test_weights = self.get_weights(j-1, index, self.local_weights)
+                    test_weight = average_weights(test_weights)
+                    self.global_model.load_state_dict(test_weight)
+                    self.global_model.eval()
+                    original_acc, original_loss = test_inference(self.args, self.global_model, self.valid_dataset)
+
+                test_weights = self.get_weights(j, index, self.local_weights)
+                test_weight = average_weights(test_weights)
+                self.global_model.load_state_dict(test_weight)
+                self.global_model.eval()
+                current_acc, current_loss = test_inference(self.args, self.global_model, self.valid_dataset)
+                SV_estimator[index[j - 1]][j] += current_acc - original_acc
+                cnt[index[j - 1]][j] += 1
+
+        shapley = np.zeros(len(self.local_weights))
+        for i in range(len(self.local_weights)):
+            for j in range(len(self.local_weights)):
+                if cnt[i][j] != 0:
+                    shapley[i] += SV_estimator[i][j] / cnt[i][j] / len(self.local_weights)
+
+        return shapley
+
+
+
+
+
+
+
+
+
