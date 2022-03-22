@@ -4,11 +4,12 @@ from src.util import average_weights
 import numpy as np
 
 class Shapley():
-    def __init__(self,local_weights,args, global_model, valid_dataset):
+    def __init__(self,local_weights,args, global_model, valid_dataset,init_acc):
         self.local_weights = local_weights
         self.args = args
         self.global_model = global_model
         self.valid_dataset = valid_dataset
+        self.init_acc = init_acc
 
     def get_weights(self,j, idx, local_ws):
         test_weight = []
@@ -59,6 +60,9 @@ class Shapley():
                 shapley[i] -= coef[len(idx)]*current_acc
             enum(l)
 
+        for i in range(len(shapley)):
+            shapley[i] -= self.init_acc/len(self.local_weights)
+
         return shapley
 
     """
@@ -68,8 +72,8 @@ class Shapley():
         shapley = np.zeros(len(self.local_weights))
         for step in trange(subnumber):
             index = np.random.permutation(len(self.local_weights))
-            original_acc = 0
-            for j in range(1, len(index)):
+            original_acc = self.init_acc
+            for j in range(1, len(index)+1):
                 test_weights = self.get_weights(j, index, self.local_weights)
                 test_weight = average_weights(test_weights)
                 self.global_model.load_state_dict(test_weight)
@@ -85,16 +89,16 @@ class Shapley():
         Approximate Shapley value by neyman method
     """
     def eval_neymanshap(self,subnumber):
-        SV_estimator = np.zeros([len(self.local_weights),len(self.local_weights)])
-        cnt = np.zeros([len(self.local_weights),len(self.local_weights)])
-        marginal_contributions = [[] for i in range(len(self.local_weights))]
-        sampling_variance = np.zeros(len(self.local_weights))
-        sampling_number = np.zeros(len(self.local_weights))
+        SV_estimator = np.zeros([len(self.local_weights)+1,len(self.local_weights)+1])
+        cnt = np.zeros([len(self.local_weights)+1,len(self.local_weights)+1])
+        marginal_contributions = [[] for i in range(len(self.local_weights)+1)]
+        sampling_variance = np.zeros(len(self.local_weights)+1)
+        sampling_number = np.zeros(len(self.local_weights)+1)
 
         for step in trange(int(subnumber/2)):
             index = np.random.permutation(len(self.local_weights))
-            original_acc = 0
-            for j in range(1, len(index)):
+            original_acc = self.init_acc
+            for j in range(1, len(index)+1):
                 test_weights = self.get_weights(j, index, self.local_weights)
                 test_weight = average_weights(test_weights)
                 self.global_model.load_state_dict(test_weight)
@@ -111,14 +115,16 @@ class Shapley():
                 for j in range(len(marginal_contributions[i])):
                     sampling_variance[i] += (marginal_contributions[i][j]-mu)**2/(len(marginal_contributions)-1)
 
-        print(sampling_variance)
+        for j in trange(1, len(sampling_variance)):
+            sampling_number[j] = int(sampling_variance[j] / np.array(sampling_variance).sum() * subnumber / 2 * len(self.local_weights))
+            print(sampling_number[j])
 
         for j in trange(1, len(sampling_variance)):
-            sampling_number[j] = int(sampling_variance[j] / np.array(sampling_variance).sum() * subnumber/2*len(self. local_weights))
+            sampling_number[j] = int(sampling_variance[j] / np.array(sampling_variance).sum() * subnumber/2*len(self.local_weights))
 
             for _ in range(int(sampling_number[j])):
                 index = np.random.permutation(len(self.local_weights))
-                original_acc = 0
+                original_acc = self.init_acc
                 if j > 1:
                     test_weights = self.get_weights(j-1, index, self.local_weights)
                     test_weight = average_weights(test_weights)
@@ -136,7 +142,7 @@ class Shapley():
 
         shapley = np.zeros(len(self.local_weights))
         for i in range(len(self.local_weights)):
-            for j in range(len(self.local_weights)):
+            for j in range(len(self.local_weights)+1):
                 if cnt[i][j] != 0:
                     shapley[i] += SV_estimator[i][j] / cnt[i][j] / len(self.local_weights)
 

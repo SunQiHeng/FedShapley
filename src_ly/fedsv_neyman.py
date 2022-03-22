@@ -78,6 +78,7 @@ def solver():
     # copy weights
     global_weights = global_model.state_dict()
     original_weights = copy.deepcopy(global_weights)
+    init_acc, init_loss = test_inference(args, global_model, test_dataset)
 
     # Training
     train_loss, train_accuracy = [], []
@@ -112,26 +113,20 @@ def solver():
             local_weights.append(copy.deepcopy(w))
             local_losses.append(copy.deepcopy(loss))
 
-        Fed_sv = Shapley(local_weights, args, global_model, valid_dataset)
 
+        Fed_sv = Shapley(local_weights,args, global_model, valid_dataset,init_acc)
+
+        exact_sv = Fed_sv.eval_exactshap()
         neyman_sv = Fed_sv.eval_neymanshap(30)
+        mc_sv = Fed_sv.eval_mcshap(30)
 
-        # if epoch == 20:
-        #     Fed_sv = Shapley(local_weights,args, global_model, valid_dataset)
-        #
-        #     exact_sv = Fed_sv.eval_exactshap()
-        #     neyman_sv = Fed_sv.eval_neymanshap(30)
-        #     mc_sv = Fed_sv.eval_mcshap(30)
-        #
-        #     error_mc = 0
-        #     error_neyman = 0
-        #     for i in range(len(exact_sv)):
-        #         error_mc += np.abs(exact_sv[i]-mc_sv[i])
-        #         error_neyman += np.abs(exact_sv[i]-neyman_sv[i])
-        #     print("Monte carlo Error: ",error_mc)
-        #     print("neyman Error: ",error_neyman)
-
-
+        error_mc = 0
+        error_neyman = 0
+        for i in range(len(exact_sv)):
+            error_mc += np.abs(exact_sv[i]-mc_sv[i])
+            error_neyman += np.abs(exact_sv[i]-neyman_sv[i])
+        print("Monte carlo Error: ", error_mc)
+        print("neyman Error: ", error_neyman)
 
         shapley = np.ones(m)
 
@@ -147,6 +142,7 @@ def solver():
         #global_weights = SVAtt_weights(local_weights, shapley, original_weights, 1-0.005*epoch, epoch)
         #global_weights = avgSV_weights(local_weights, shapley)
                 # update global weights
+
         if epoch < 75:
             global_weights = avgSV_weights(local_weights, shapley)
         elif epoch < 100:
@@ -177,6 +173,7 @@ def solver():
             print('Train Accuracy: {:.2f}% \n'.format(100 * train_accuracy[-1]))
 
         test_acc, test_loss = test_inference(args, global_model, test_dataset)
+        init_acc = test_acc
         allAcc_list.append(test_acc)
         print(" \nglobal accuracy:{:.2f}%".format(100 * test_acc))
 
